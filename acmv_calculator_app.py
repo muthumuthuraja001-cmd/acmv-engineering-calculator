@@ -95,7 +95,7 @@ def make_pdf(title, lines):
         "Note: This is a preliminary engineering calculation. Final equipment selection shall be verified with approved specifications, manufacturer catalogues, and project requirements.",
     )
 
-    data = pdf.output(dest="S").encode("latin-1")
+    data = bytes(pdf.output(dest="S"))
     return BytesIO(data)
 
 
