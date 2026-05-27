@@ -85,7 +85,7 @@ def make_pdf(title, lines):
 
     for line in lines:
         safe_line = str(line).replace("Δ", "Delta").replace("²", "2").replace("³", "3")
-        pdf.multi_cell(0, 7, safe_line)
+        pdf.multi_cell(190, 7, txt=str(safe_line))
 
     pdf.ln(4)
     pdf.set_font("Arial", "I", 9)
