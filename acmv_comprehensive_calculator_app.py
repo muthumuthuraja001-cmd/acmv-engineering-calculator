@@ -326,7 +326,16 @@ module = st.sidebar.radio(
         "7. Fan Selection / Fan Power",
         "8. Electrical FLA / Motor",
         "9. Chilled Water / Coil Flow",
-        "10. Condensate Drain / Final Summary",
+        "10. AHU Special Calculation",
+        "11. Pressure Drop Calculation",
+        "12. MV Fan Selection",
+        "13. Smoke Spill Fan Calculation",
+        "14. Fresh Air Fan Calculation",
+        "15. Exhaust Fan Calculation",
+        "16. AHU Selection",
+        "17. FCU Selection",
+        "18. Export Excel / PDF / Word",
+        "19. Condensate Drain / Final Summary",
     ],
 )
 
@@ -680,37 +689,497 @@ elif module.startswith("9."):
     save_summary("CHW / Coil Flow",summary); metric_row(summary); st.dataframe(result_df,use_container_width=True,height=500); show_downloads(result_df,summary,"chilled_water_coil_flow_calculation","Chilled Water Coil Flow Calculation")
 
 # =====================================================
-# 10 CONDENSATE DRAIN / FINAL SUMMARY
+# 10 AHU SPECIAL CALCULATION
 # =====================================================
 elif module.startswith("10."):
+    st.header("AHU Special Calculation")
+
+    default = pd.DataFrame([{
+        "Ref": ref,
+        "Fan No": "",
+        "SPL Flow CMH": 0.0,
+        "Revised Flow CMH": 0.0,
+        "No. of Transition": 1.0,
+        "Shaft Length m": 0.0,
+        "Shaft Width m": 0.0,
+        "Shaft Height m": 0.0,
+        "K-Factor": 0.00444,
+        "Shock Loss Factor": 1.2,
+        "Air Density kg/m3": 1.2
+    } for ref in refs])
+
+    edited = editor_with_state("ahu_special_df_v1", default)
+
+    rows = []
+    for _, row in edited.iterrows():
+        revised_flow = safe_float(row.get("Revised Flow CMH"))
+        transition_no = safe_float(row.get("No. of Transition"))
+        length = safe_float(row.get("Shaft Length m"))
+        width = safe_float(row.get("Shaft Width m"))
+        height = safe_float(row.get("Shaft Height m"))
+        k_factor = safe_float(row.get("K-Factor"))
+        shock_factor = safe_float(row.get("Shock Loss Factor"))
+        air_density = safe_float(row.get("Air Density kg/m3"))
+
+        airflow_m3s = revised_flow / 3600 if revised_flow else 0
+        perimeter = (width + height) * 2 if width and height else 0
+        area = width * height if width and height else 0
+        ratio = height / width if width else 0
+
+        if area > 0:
+            straight_r = (k_factor * length * perimeter * air_density) / ((area ** 3) * 1.2)
+            bend_r = (shock_factor * air_density) / (2 * (area ** 2))
+            total_r = straight_r + (transition_no * bend_r)
+            static_loss = math.ceil(total_r * airflow_m3s * airflow_m3s) * 1.5
+        else:
+            straight_r = bend_r = total_r = static_loss = 0
+
+        rows.append({
+            **row.to_dict(),
+            "Air Flow m3/s": round(airflow_m3s, 3),
+            "Perimeter m": round(perimeter, 3),
+            "Area m2": round(area, 3),
+            "H/W Ratio": round(ratio, 3),
+            "Straight Run R": round(straight_r, 6),
+            "Bend R": round(bend_r, 6),
+            "Total R": round(total_r, 6),
+            "Static Pressure Loss Pa": round(static_loss, 2)
+        })
+
+    result_df = pd.DataFrame(rows)
+    active = result_df[result_df["Revised Flow CMH"] > 0]
+
+    summary = {
+        "Total AHU Static Pressure Pa": round(active["Static Pressure Loss Pa"].sum() * 1.5 if not active.empty else 0, 2),
+        "No. of Active Rows": len(active)
+    }
+
+    save_summary("AHU Special Calculation", summary)
+    metric_row(summary)
+    st.dataframe(result_df, use_container_width=True, height=500)
+    show_downloads(result_df, summary, "ahu_special_calculation", "AHU Special Calculation")
+
+
+# =====================================================
+# 11 PRESSURE DROP CALCULATION
+# =====================================================
+elif module.startswith("11."):
+    st.header("Pressure Drop Calculation - 50 Rows")
+
+    default = pd.DataFrame([{
+        "Ref": ref,
+        "System Element": "",
+        "Equipment Label": "",
+        "CMH": 0.0,
+        "Outlet Area m2": 0.0,
+        "Length m / No.": 0.0,
+        "Loss Coefficient K": 0.0,
+        "Air Density kg/m3": 1.2
+    } for ref in refs])
+
+    edited = editor_with_state("pressure_drop_df_v1", default)
+
+    rows = []
+    for _, row in edited.iterrows():
+        cmh = safe_float(row.get("CMH"))
+        area = safe_float(row.get("Outlet Area m2"))
+        length_no = safe_float(row.get("Length m / No."))
+        k = safe_float(row.get("Loss Coefficient K"))
+        density = safe_float(row.get("Air Density kg/m3"))
+
+        q_m3s = cmh / 3600 if cmh else 0
+        velocity = q_m3s / area if area > 0 else 0
+        velocity_pressure = density * velocity * velocity / 2
+        pressure_drop = velocity_pressure * k * length_no
+
+        rows.append({
+            **row.to_dict(),
+            "Air Flow Q m3/s": round(q_m3s, 3),
+            "Velocity m/s": round(velocity, 3),
+            "Velocity Pressure Pa": round(velocity_pressure, 2),
+            "Pressure Drop Pa": round(pressure_drop, 2)
+        })
+
+    result_df = pd.DataFrame(rows)
+    active = result_df[result_df["CMH"] > 0]
+
+    summary = {
+        "Total Pressure Drop Pa": round(active["Pressure Drop Pa"].sum() if not active.empty else 0, 2),
+        "No. of Active Rows": len(active)
+    }
+
+    save_summary("Pressure Drop Calculation", summary)
+    metric_row(summary)
+    st.dataframe(result_df, use_container_width=True, height=500)
+    show_downloads(result_df, summary, "pressure_drop_calculation", "Pressure Drop Calculation")
+
+
+# =====================================================
+# 12 MV FAN SELECTION
+# =====================================================
+elif module.startswith("12."):
+    st.header("MV Fan Selection - 50 Rows")
+
+    default = pd.DataFrame([{
+        "Ref": ref,
+        "Fan Tag": "",
+        "Location": "",
+        "Airflow CMH": 0.0,
+        "External Static Pressure Pa": 0.0,
+        "Fan Efficiency %": 60.0,
+        "Motor Safety Margin %": 15.0
+    } for ref in refs])
+
+    edited = editor_with_state("mv_fan_df_v1", default)
+
+    rows = []
+    for _, row in edited.iterrows():
+        cmh = safe_float(row.get("Airflow CMH"))
+        esp = safe_float(row.get("External Static Pressure Pa"))
+        eff = safe_float(row.get("Fan Efficiency %"))
+        margin = safe_float(row.get("Motor Safety Margin %"))
+
+        q = cmh / 3600 if cmh else 0
+        power_kw = (q * esp) / ((eff / 100) * 1000) if eff > 0 else 0
+        motor_kw = power_kw * (1 + margin / 100)
+
+        rows.append({
+            **row.to_dict(),
+            "Airflow m3/s": round(q, 3),
+            "Fan Power kW": round(power_kw, 3),
+            "Recommended Motor kW": round(motor_kw, 3)
+        })
+
+    result_df = pd.DataFrame(rows)
+    active = result_df[result_df["Airflow CMH"] > 0]
+
+    summary = {
+        "Total Airflow CMH": round(active["Airflow CMH"].sum() if not active.empty else 0, 2),
+        "Total Fan Power kW": round(active["Fan Power kW"].sum() if not active.empty else 0, 2)
+    }
+
+    save_summary("MV Fan Selection", summary)
+    metric_row(summary)
+    st.dataframe(result_df, use_container_width=True, height=500)
+    show_downloads(result_df, summary, "mv_fan_selection", "MV Fan Selection")
+
+
+# =====================================================
+# 13 SMOKE SPILL FAN CALCULATION
+# =====================================================
+elif module.startswith("13."):
+    st.header("Smoke Spill Fan Calculation - 50 Rows")
+
+    default = pd.DataFrame([{
+        "Ref": ref,
+        "Area / Zone": "",
+        "Length m": 0.0,
+        "Width m": 0.0,
+        "Smoke Exhaust Rate ACH": 10.0,
+        "Room Height m": 3.0,
+        "Safety Factor %": 10.0
+    } for ref in refs])
+
+    edited = editor_with_state("smoke_spill_df_v1", default)
+
+    rows = []
+    for _, row in edited.iterrows():
+        length = safe_float(row.get("Length m"))
+        width = safe_float(row.get("Width m"))
+        height = safe_float(row.get("Room Height m"))
+        ach = safe_float(row.get("Smoke Exhaust Rate ACH"))
+        safety = safe_float(row.get("Safety Factor %"))
+
+        volume = length * width * height
+        airflow = volume * ach
+        final_airflow = airflow * (1 + safety / 100)
+
+        rows.append({
+            **row.to_dict(),
+            "Room Volume m3": round(volume, 2),
+            "Required Airflow CMH": round(airflow, 2),
+            "Final Airflow with Safety CMH": round(final_airflow, 2)
+        })
+
+    result_df = pd.DataFrame(rows)
+    active = result_df[result_df["Final Airflow with Safety CMH"] > 0]
+
+    summary = {
+        "Total Smoke Spill Airflow CMH": round(active["Final Airflow with Safety CMH"].sum() if not active.empty else 0, 2)
+    }
+
+    save_summary("Smoke Spill Fan Calculation", summary)
+    metric_row(summary)
+    st.dataframe(result_df, use_container_width=True, height=500)
+    show_downloads(result_df, summary, "smoke_spill_fan_calculation", "Smoke Spill Fan Calculation")
+
+
+# =====================================================
+# 14 FRESH AIR FAN CALCULATION
+# =====================================================
+elif module.startswith("14."):
+    st.header("Fresh Air Fan Calculation - 50 Rows")
+
+    default = pd.DataFrame([{
+        "Ref": ref,
+        "Room / Area": "",
+        "No. of Persons": 0.0,
+        "Fresh Air per Person L/s": 10.0,
+        "Area m2": 0.0,
+        "Fresh Air per Area L/s/m2": 0.3,
+        "Safety Factor %": 10.0
+    } for ref in refs])
+
+    edited = editor_with_state("fresh_air_df_v1", default)
+
+    rows = []
+    for _, row in edited.iterrows():
+        people = safe_float(row.get("No. of Persons"))
+        fa_person = safe_float(row.get("Fresh Air per Person L/s"))
+        area = safe_float(row.get("Area m2"))
+        fa_area = safe_float(row.get("Fresh Air per Area L/s/m2"))
+        safety = safe_float(row.get("Safety Factor %"))
+
+        lps = (people * fa_person) + (area * fa_area)
+        cmh = lps * 3.6
+        final_cmh = cmh * (1 + safety / 100)
+
+        rows.append({
+            **row.to_dict(),
+            "Fresh Air L/s": round(lps, 2),
+            "Fresh Air CMH": round(cmh, 2),
+            "Final Fresh Air CMH": round(final_cmh, 2)
+        })
+
+    result_df = pd.DataFrame(rows)
+    active = result_df[result_df["Final Fresh Air CMH"] > 0]
+
+    summary = {
+        "Total Fresh Air CMH": round(active["Final Fresh Air CMH"].sum() if not active.empty else 0, 2)
+    }
+
+    save_summary("Fresh Air Fan Calculation", summary)
+    metric_row(summary)
+    st.dataframe(result_df, use_container_width=True, height=500)
+    show_downloads(result_df, summary, "fresh_air_fan_calculation", "Fresh Air Fan Calculation")
+
+
+# =====================================================
+# 15 EXHAUST FAN CALCULATION
+# =====================================================
+elif module.startswith("15."):
+    st.header("Exhaust Fan Calculation - 50 Rows")
+
+    default = pd.DataFrame([{
+        "Ref": ref,
+        "Room / Area": "",
+        "Length m": 0.0,
+        "Width m": 0.0,
+        "Height m": 3.0,
+        "Required ACH": 10.0,
+        "Safety Factor %": 10.0
+    } for ref in refs])
+
+    edited = editor_with_state("exhaust_fan_df_v1", default)
+
+    rows = []
+    for _, row in edited.iterrows():
+        length = safe_float(row.get("Length m"))
+        width = safe_float(row.get("Width m"))
+        height = safe_float(row.get("Height m"))
+        ach = safe_float(row.get("Required ACH"))
+        safety = safe_float(row.get("Safety Factor %"))
+
+        volume = length * width * height
+        cmh = volume * ach
+        final_cmh = cmh * (1 + safety / 100)
+
+        rows.append({
+            **row.to_dict(),
+            "Room Volume m3": round(volume, 2),
+            "Exhaust Airflow CMH": round(cmh, 2),
+            "Final Exhaust Airflow CMH": round(final_cmh, 2)
+        })
+
+    result_df = pd.DataFrame(rows)
+    active = result_df[result_df["Final Exhaust Airflow CMH"] > 0]
+
+    summary = {
+        "Total Exhaust Airflow CMH": round(active["Final Exhaust Airflow CMH"].sum() if not active.empty else 0, 2)
+    }
+
+    save_summary("Exhaust Fan Calculation", summary)
+    metric_row(summary)
+    st.dataframe(result_df, use_container_width=True, height=500)
+    show_downloads(result_df, summary, "exhaust_fan_calculation", "Exhaust Fan Calculation")
+
+
+# =====================================================
+# 16 AHU SELECTION
+# =====================================================
+elif module.startswith("16."):
+    st.header("AHU Selection - 50 Rows")
+
+    default = pd.DataFrame([{
+        "Ref": ref,
+        "AHU Tag": "",
+        "Location": "",
+        "Cooling Load kW": 0.0,
+        "Airflow CMH": 0.0,
+        "External Static Pressure Pa": 0.0,
+        "CHW Flow L/s": 0.0,
+        "Quantity": 1.0
+    } for ref in refs])
+
+    edited = editor_with_state("ahu_selection_df_v1", default)
+
+    rows = []
+    for _, row in edited.iterrows():
+        kw = safe_float(row.get("Cooling Load kW"))
+        cmh = safe_float(row.get("Airflow CMH"))
+        esp = safe_float(row.get("External Static Pressure Pa"))
+        flow = safe_float(row.get("CHW Flow L/s"))
+        qty = safe_float(row.get("Quantity"), 1)
+
+        rows.append({
+            **row.to_dict(),
+            "Total Cooling Load kW": round(kw * qty, 2),
+            "Total Airflow CMH": round(cmh * qty, 2),
+            "Selection Remarks": "OK" if kw > 0 and cmh > 0 else ""
+        })
+
+    result_df = pd.DataFrame(rows)
+    active = result_df[result_df["Cooling Load kW"] > 0]
+
+    summary = {
+        "Total AHU Cooling Load kW": round(active["Total Cooling Load kW"].sum() if not active.empty else 0, 2),
+        "Total AHU Airflow CMH": round(active["Total Airflow CMH"].sum() if not active.empty else 0, 2)
+    }
+
+    save_summary("AHU Selection", summary)
+    metric_row(summary)
+    st.dataframe(result_df, use_container_width=True, height=500)
+    show_downloads(result_df, summary, "ahu_selection", "AHU Selection")
+
+
+# =====================================================
+# 17 FCU SELECTION
+# =====================================================
+elif module.startswith("17."):
+    st.header("FCU Selection - 50 Rows")
+
+    default = pd.DataFrame([{
+        "Ref": ref,
+        "FCU Tag": "",
+        "Room / Area": "",
+        "Cooling Load kW": 0.0,
+        "Airflow CMH": 0.0,
+        "CHW Flow L/s": 0.0,
+        "Quantity": 1.0
+    } for ref in refs])
+
+    edited = editor_with_state("fcu_selection_df_v1", default)
+
+    rows = []
+    for _, row in edited.iterrows():
+        kw = safe_float(row.get("Cooling Load kW"))
+        cmh = safe_float(row.get("Airflow CMH"))
+        flow = safe_float(row.get("CHW Flow L/s"))
+        qty = safe_float(row.get("Quantity"), 1)
+
+        rows.append({
+            **row.to_dict(),
+            "Total Cooling Load kW": round(kw * qty, 2),
+            "Total Airflow CMH": round(cmh * qty, 2),
+            "Total CHW Flow L/s": round(flow * qty, 2),
+            "Selection Remarks": "OK" if kw > 0 and cmh > 0 else ""
+        })
+
+    result_df = pd.DataFrame(rows)
+    active = result_df[result_df["Cooling Load kW"] > 0]
+
+    summary = {
+        "Total FCU Cooling Load kW": round(active["Total Cooling Load kW"].sum() if not active.empty else 0, 2),
+        "Total FCU Airflow CMH": round(active["Total Airflow CMH"].sum() if not active.empty else 0, 2)
+    }
+
+    save_summary("FCU Selection", summary)
+    metric_row(summary)
+    st.dataframe(result_df, use_container_width=True, height=500)
+    show_downloads(result_df, summary, "fcu_selection", "FCU Selection")
+
+
+# =====================================================
+# 18 EXPORT EXCEL / PDF / WORD
+# =====================================================
+elif module.startswith("18."):
+    st.header("Export Excel / PDF / Word")
+    st.info("Individual module export buttons are available inside each calculation module. Full combined export can be added in the next upgrade.")
+
+
+# =====================================================
+# 19 CONDENSATE DRAIN / FINAL SUMMARY
+# =====================================================
+elif module.startswith("19."):
     st.header("Condensate Drain / Final Summary")
-    st.write("Preliminary condensate estimation. Actual drain sizing shall follow project specification, local code and manufacturer details.")
-    default=pd.DataFrame([{ "Ref":ref,"Equipment Tag":"FCU-1" if i==0 else "","Type":"FCU" if i==0 else "Blank","Cooling Capacity kW":10.0 if i==0 else 0.0,"Latent Fraction %":30.0,"Drain Pipe Dia mm":25.0,"Pipe Gradient %":1.0,"Quantity":1.0} for i,ref in enumerate(refs)])
-    edited=editor_with_state("cond_df_v2",default,column_config={"Type":st.column_config.SelectboxColumn("Type",options=["Blank","FCU","AHU","PAHU","DX Unit","Other"])} )
-    rows=[]
-    for _,row in edited.iterrows():
-        typ=row.get("Type","Blank"); kw=safe_float(row.get("Cooling Capacity kW")); latent=safe_float(row.get("Latent Fraction %"))/100; dia=safe_float(row.get("Drain Pipe Dia mm")); grad=safe_float(row.get("Pipe Gradient %")); qty=safe_float(row.get("Quantity"),1)
-        # Condensate kg/s approximate = latent kW / hfg, hfg approx 2450 kJ/kg. Convert to L/hr.
-        cond_lhr=(kw*latent/2450)*3600 if typ!="Blank" else 0.0
-        remarks=[]
-        if typ!="Blank":
-            if dia<20: remarks.append("Small drain pipe - verify")
-            if grad<1: remarks.append("Low gradient - verify")
-        rows.append({**row.to_dict(),"Condensate L/hr Each":round(cond_lhr,2),"Total Condensate L/hr":round(cond_lhr*qty,2),"Status / Remarks":"; ".join(remarks) if remarks else ("OK" if typ!="Blank" else "")})
-    result_df=pd.DataFrame(rows); active=result_df[result_df["Type"]!="Blank"]
-    summary={"Total Condensate L/hr":round(active["Total Condensate L/hr"].sum() if not active.empty else 0,2),"Max Unit L/hr":round(active["Condensate L/hr Each"].max() if not active.empty else 0,2),"No. of Units":int(len(active))}
-    save_summary("Condensate Drain",summary); metric_row(summary); st.dataframe(result_df,use_container_width=True,height=400); show_downloads(result_df,summary,"condensate_drain_calculation","Condensate Drain Calculation")
+    st.write("Preliminary condensate estimation. Actual drain sizing shall follow project specific and manufacturer details.")
 
-    st.subheader("Final Master Summary")
-    if st.session_state.master_summary:
-        master_rows=[]
-        for mod, summ in st.session_state.master_summary.items():
-            row={"Module":mod}; row.update(summ); master_rows.append(row)
-        master_df=pd.DataFrame(master_rows)
-        st.dataframe(master_df,use_container_width=True)
-        st.download_button("Download Master Summary Excel",data=excel_download(master_df,st.session_state.project_info,{"Generated Modules":len(master_rows)},"Master Summary"),file_name="acmv_master_summary.xlsx",mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",key="master_summary_xlsx")
-    else:
-        st.info("Calculate other modules first, then return here to see the master summary.")
+    default = pd.DataFrame([{
+        "Ref": ref,
+        "Equipment Tag": "FCU-1" if i == 0 else "",
+        "Type": "FCU" if i == 0 else "Blank",
+        "Cooling Capacity kW": 10.0 if i == 0 else 0.0,
+        "Latent Fraction %": 30.0,
+        "Drain Pipe Dia mm": 20.0,
+        "Pipe Gradient %": 1.0,
+        "Quantity": 1.0
+    } for i, ref in enumerate(refs)])
 
-st.divider()
-st.caption("Preliminary ACMV calculation app. Not a substitute for PE/QP design, approved specifications, authority requirements or manufacturer selection software.")
+    edited = editor_with_state(
+        "cond_df_v2",
+        default,
+        column_config={
+            "Type": st.column_config.SelectboxColumn(
+                "Type",
+                options=["Blank", "FCU", "AHU", "PAHU", "DX Unit", "Other"]
+            )
+        }
+    )
+
+    rows = []
+    for _, row in edited.iterrows():
+        typ = row.get("Type", "Blank")
+        kw = safe_float(row.get("Cooling Capacity kW"))
+        latent = safe_float(row.get("Latent Fraction %")) / 100
+        dia = safe_float(row.get("Drain Pipe Dia mm"))
+        grad = safe_float(row.get("Pipe Gradient %"))
+        qty = safe_float(row.get("Quantity"), 1)
+
+        cond_lhr = (kw * latent / 2450) * 3600 if typ != "Blank" else 0.0
+
+        remarks = []
+        if typ != "Blank":
+            if dia < 20:
+                remarks.append("Small drain pipe - verify")
+            if grad < 1:
+                remarks.append("Low gradient - verify")
+
+        rows.append({
+            **row.to_dict(),
+            "Condensate L/hr Each": round(cond_lhr, 2),
+            "Total Condensate L/hr": round(cond_lhr * qty, 2),
+            "Status / Remarks": "; ".join(remarks) if remarks else ("OK" if typ != "Blank" else "")
+        })
+
+    result_df = pd.DataFrame(rows)
+    active = result_df[result_df["Type"] != "Blank"]
+
+    summary = {
+        "Total Condensate L/hr": round(active["Total Condensate L/hr"].sum() if not active.empty else 0, 2),
+        "No. of Active Rows": len(active)
+    }
+
+    save_summary("Condensate Drain / Final Summary", summary)
+    metric_row(summary)
+    st.dataframe(result_df, use_container_width=True, height=500)
+    show_downloads(result_df, summary, "condensate_drain_final_summary", "Condensate Drain / Final Summary")
